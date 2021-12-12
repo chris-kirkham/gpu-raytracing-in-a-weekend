@@ -1,0 +1,163 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Raytrace
+
+//raycast structs
+struct Ray
+{
+    float3 origin;
+    float3 direction;
+    
+    float3 PointAlongRay(float t)
+    {
+        return origin + (direction * t);
+    }
+};
+
+struct RaycastHit
+{
+    float t;
+    float3 p;
+    float3 normal;
+};
+
+//shape structs
+struct Sphere
+{
+    float3 pos;
+    float r;
+    float4 col;
+};
+
+//shapes
+StructuredBuffer<Sphere> spheres;
+int numSpheres;
+
+//camera
+float3 camPos;
+float3 camRight, camUp, camForward;
+float camNearClipDist;
+float camNearClipWidth, camNearClipHeight;
+float screenWidthWS, screenHeightWS;
+
+//output RenderTexture
+RWTexture2D<float4> outputTex;
+int outputTexWidth, outputTexHeight;
+
+//returns point on ray at which sphere was hit (so hit point will be rayOrigin + (t * rayDir)
+bool HitSphere(Sphere s, Ray ray, float tMin, float tMax, out RaycastHit hit)
+{
+    float3 originToSphereCentre = ray.origin - s.pos;
+    float a = dot(ray.direction, ray.direction);
+    float b = 2 * dot(originToSphereCentre, ray.direction);
+    float c = dot(originToSphereCentre, originToSphereCentre) - (s.r * s.r);
+    float discriminant = (b * b) - (4 * a * c);
+ 
+    if(discriminant >= 0)
+    {
+        float sqrtDiscriminant = sqrt(discriminant);
+        float temp = (-b - sqrtDiscriminant) / (2 * a);
+        if(temp < tMax && temp > tMin)
+        {
+            hit.t = temp;
+            hit.p = ray.PointAlongRay(temp);
+            hit.normal = (hit.p - s.pos) / s.r;
+            return true;
+        }
+        
+        temp = (-b + sqrtDiscriminant) / (2 * a);
+        if (temp < tMax && temp > tMin)
+        {
+            hit.t = temp;
+            hit.p = ray.PointAlongRay(temp);
+            hit.normal = (hit.p - s.pos) / s.r;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+
+float BadRand(float2 uv)
+{
+    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+}
+float3 RandomInUnitSphere(float3 spherePos)
+{
+    float3 p;
+    do
+    {
+        p = 2 * float3(BadRand(spherePos.xy), BadRand(spherePos.yz), BadRand(spherePos.zx)) - 1;
+    } while (dot(p, p) >= 1);
+    
+    return p;
+}
+
+float4 Colour(Ray ray, out RaycastHit hit, out bool hasHit)
+{
+    //raycast to get closest hit sphere, if any
+    int idxOfNearest = -1;
+    float tMin = 0.001f; //needs to be slightly >0 to avoid "shadow acne" caused by self-intersection 
+    float nearestZ = 1000000;
+    float nearestT = 100000;
+    RaycastHit tempHit;
+    for (int i = 0; i < numSpheres; i++)
+    {
+        Sphere s = spheres[i];
+        if (HitSphere(s, ray, tMin, nearestT, tempHit) && tempHit.t < nearestT) // - HitSphere only returns true if this is true
+        {
+            hit = tempHit;
+            nearestT = hit.t;
+            idxOfNearest = i;
+        }
+    }
+    
+    //if we hit sphere 
+    if(idxOfNearest >= 0)
+    {
+        hasHit = true;
+        return spheres[idxOfNearest].col * 0.5f;
+    }
+    else
+    {
+        hasHit = false;
+        //sky colour
+        float t = ray.direction * 0.5f + 0.5f;
+        return (1 - t) + (t * float4(0.5f, 0.7f, 1, 1));
+    }
+}
+
+float4 TraceRay(Ray ray, int maxBounces)
+{
+    bool hasHit;
+    RaycastHit hit;
+    float4 col = Colour(ray, hit, hasHit);
+    int i = 0;
+    
+    while (hasHit && i < maxBounces)
+    {
+        //cast another ray in a random direction determined by a point inside a unit sphere whose centre is hit.point + hit.normal
+        Ray newRay;
+        newRay.origin = hit.p;
+        float3 tangentSpherePos = hit.p + hit.normal;
+        newRay.direction = normalize(tangentSpherePos + RandomInUnitSphere(tangentSpherePos));
+        
+        col *= Colour(newRay, hit, hasHit);
+        i++;
+    }
+    
+    return col;
+}
+
+[numthreads(8,8,1)]
+void Raytrace (uint3 id : SV_DispatchThreadID)
+{
+    float2 normalisedPixelPos = float2((float)id.x / outputTexWidth, (float)id.y / outputTexHeight) - 0.5f; //pixel position normalised to [(-0.5, -0,5), (0.5, 0.5)]
+    float3 pixelPosWS = camPos + (camForward * camNearClipDist) + (camRight * normalisedPixelPos.x * camNearClipWidth) + (camUp * normalisedPixelPos.y * camNearClipHeight);
+    float3 rayDir = normalize(pixelPosWS - camPos);
+    
+    Ray ray;
+    ray.origin = camPos;
+    ray.direction = rayDir;
+    outputTex[id.xy] = TraceRay(ray, 4);
+}
