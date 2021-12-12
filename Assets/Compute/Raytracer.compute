@@ -39,21 +39,30 @@ float BadRand(float2 uv)
 {
     return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
 }
-float3 RandomInUnitSphere(float3 spherePos)
+float3 RandomInUnitSphere(float3 pos)
 {
     float3 p;
     do
     {
-        p = 2 * float3(BadRand(spherePos.xy), BadRand(spherePos.yz), BadRand(spherePos.zx)) - 1;
+        p = 2 * float3(BadRand(pos.xy), BadRand(pos.yz), BadRand(pos.zx)) - 1;
     } while (dot(p, p) >= 1);
     
     return p;
 }
+
+//returns a random point in a hemisphere whose up vector is the given normal
+float3 RandomInHemisphere(float3 normal)
+{
+    float3 rand = RandomInUnitSphere(normal);
+    return rand * dot(rand, normal) > 0 ? 1 : -1;
+}
+
 //From the given raycast hit, return a random direction determined by a point inside a unit sphere whose centre is hit.point + hit.normal
 float3 Diffuse(RaycastHit hit)
 {
     float3 tangentSphereCentre = hit.p + hit.normal;
-    return normalize(tangentSphereCentre + RandomInUnitSphere(tangentSphereCentre)) - hit.p;
+    float3 target = tangentSphereCentre + RandomInUnitSphere(tangentSphereCentre);
+    return normalize(target - hit.p);
 }
 
 //Reflect the incoming ray off the hit surface
@@ -166,6 +175,7 @@ float4 Colour(Ray ray, out RaycastHit hit, out bool hasHit)
         //sky colour
         float t = ray.direction * 0.5f + 0.5f;
         return (1 - t) + (t * float4(0.5f, 0.7f, 1, 1));
+        //return float4(ray.direction * 0.5f + 0.5f, 1);
     }
 }
 
@@ -184,7 +194,7 @@ float4 TraceRay(Ray ray, int maxBounces)
         prevRay = bounce.scattered;
         i++;
     }
-    
+
     return col;
 }
 

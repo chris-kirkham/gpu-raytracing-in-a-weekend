@@ -58,6 +58,12 @@ public class CamController : MonoBehaviour
         {
             turnAmount += turnSpeed * Time.deltaTime;
         }
+
+    }
+
+    private void LateUpdate()
+    {
+        transform.Rotate(transform.up * turnAmount);
     }
 
     private void FixedUpdate()
@@ -65,7 +71,6 @@ public class CamController : MonoBehaviour
         if(rb)
         {
             rb.AddForce(forceToApply, ForceMode.Force);
-            rb.transform.Rotate(rb.transform.up, turnAmount);
         }
     }
 

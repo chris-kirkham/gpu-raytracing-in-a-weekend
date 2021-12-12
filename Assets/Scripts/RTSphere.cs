@@ -6,7 +6,6 @@ public class RTSphere : MonoBehaviour
 {
     public float radius;
     public RaytraceMaterial mat;
-    public bool isMetal;
 
     private void OnDrawGizmos()
     {
