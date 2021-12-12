@@ -1,7 +1,14 @@
 ﻿// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel Raytrace
 
-//raycast structs
+struct Material
+{
+    float4 col;
+    float smoothness;
+    float emissive;
+    int isMetal;
+};
+
 struct Ray
 {
     float3 origin;
@@ -18,14 +25,63 @@ struct RaycastHit
     float t;
     float3 p;
     float3 normal;
+    Material mat;
 };
+
+struct MaterialBounce //light bounce from a material
+{
+    Ray scattered;
+    float4 attenuation;
+};
+
+//--material functions--
+float BadRand(float2 uv)
+{
+    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+}
+float3 RandomInUnitSphere(float3 spherePos)
+{
+    float3 p;
+    do
+    {
+        p = 2 * float3(BadRand(spherePos.xy), BadRand(spherePos.yz), BadRand(spherePos.zx)) - 1;
+    } while (dot(p, p) >= 1);
+    
+    return p;
+}
+//From the given raycast hit, return a random direction determined by a point inside a unit sphere whose centre is hit.point + hit.normal
+float3 Diffuse(RaycastHit hit)
+{
+    float3 tangentSphereCentre = hit.p + hit.normal;
+    return normalize(tangentSphereCentre + RandomInUnitSphere(tangentSphereCentre)) - hit.p;
+}
+
+//Reflect the incoming ray off the hit surface
+float3 Reflect(float3 incomingRayDir, float3 surfaceNormal, float smoothness)
+{
+    return incomingRayDir - 2 * dot(incomingRayDir, surfaceNormal) * surfaceNormal;
+}
+  
+//get the material's bounced light info
+MaterialBounce Scatter(Ray rayIn, RaycastHit hit)
+{
+    MaterialBounce bounce;
+    Ray scattered;
+    scattered.origin = hit.p;
+    //scattered.direction = Reflect(rayIn.direction, hit.normal, hit.mat.smoothness); 
+    scattered.direction = hit.mat.isMetal > 0 ? Reflect(rayIn.direction, hit.normal, hit.mat.smoothness) : Diffuse(hit);
+    bounce.scattered = scattered;
+    bounce.attenuation = hit.mat.col;
+        
+    return bounce;
+}
 
 //shape structs
 struct Sphere
 {
     float3 pos;
     float r;
-    float4 col;
+    Material mat;
 };
 
 //shapes
@@ -61,6 +117,7 @@ bool HitSphere(Sphere s, Ray ray, float tMin, float tMax, out RaycastHit hit)
             hit.t = temp;
             hit.p = ray.PointAlongRay(temp);
             hit.normal = (hit.p - s.pos) / s.r;
+            hit.mat = s.mat;
             return true;
         }
         
@@ -70,27 +127,12 @@ bool HitSphere(Sphere s, Ray ray, float tMin, float tMax, out RaycastHit hit)
             hit.t = temp;
             hit.p = ray.PointAlongRay(temp);
             hit.normal = (hit.p - s.pos) / s.r;
+            hit.mat = s.mat;
             return true;
         }
     }
     
     return false;
-}
-
-
-float BadRand(float2 uv)
-{
-    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
-}
-float3 RandomInUnitSphere(float3 spherePos)
-{
-    float3 p;
-    do
-    {
-        p = 2 * float3(BadRand(spherePos.xy), BadRand(spherePos.yz), BadRand(spherePos.zx)) - 1;
-    } while (dot(p, p) >= 1);
-    
-    return p;
 }
 
 float4 Colour(Ray ray, out RaycastHit hit, out bool hasHit)
@@ -116,7 +158,7 @@ float4 Colour(Ray ray, out RaycastHit hit, out bool hasHit)
     if(idxOfNearest >= 0)
     {
         hasHit = true;
-        return spheres[idxOfNearest].col * 0.5f;
+        return spheres[idxOfNearest].mat.col;
     }
     else
     {
@@ -134,15 +176,12 @@ float4 TraceRay(Ray ray, int maxBounces)
     float4 col = Colour(ray, hit, hasHit);
     int i = 0;
     
+    Ray prevRay = ray;
     while (hasHit && i < maxBounces)
     {
-        //cast another ray in a random direction determined by a point inside a unit sphere whose centre is hit.point + hit.normal
-        Ray newRay;
-        newRay.origin = hit.p;
-        float3 tangentSpherePos = hit.p + hit.normal;
-        newRay.direction = normalize(tangentSpherePos + RandomInUnitSphere(tangentSpherePos));
-        
-        col *= Colour(newRay, hit, hasHit);
+        MaterialBounce bounce = Scatter(prevRay, hit);
+        col *= Colour(bounce.scattered, hit, hasHit) * bounce.attenuation;
+        prevRay = bounce.scattered;
         i++;
     }
     
@@ -159,5 +198,5 @@ void Raytrace (uint3 id : SV_DispatchThreadID)
     Ray ray;
     ray.origin = camPos;
     ray.direction = rayDir;
-    outputTex[id.xy] = TraceRay(ray, 4);
+    outputTex[id.xy] = TraceRay(ray, 32);
 }

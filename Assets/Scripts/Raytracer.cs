@@ -140,6 +140,7 @@ public struct RaytraceMaterial
     public Color col;
     public float smoothness;
     public float emissive;
+    public int isMetal;
 }
 
 //vector -> array extension methods
